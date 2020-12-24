@@ -478,7 +478,7 @@ static int term_fillPixels(lua_State* L) {
             const int x = init_x + w;
 
             if (x >= 0 && x < term->width * Terminal::fontWidth) {
-                term->pixels[y][x] = term->mode == 2 ? color : log2i(color);
+                (*term->currentPixels())[y][x] = term->mode == 2 ? color : log2i(color);
             }
         }
     }
