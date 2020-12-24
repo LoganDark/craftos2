@@ -47,6 +47,7 @@ private:
     int drawPixels(lua_State *L);
     int getPixels(lua_State *L);
     int fillPixels(lua_State *L);
+    int bufferPixels(lua_State *L);
 public:
     Terminal * term;
     static library_t methods;

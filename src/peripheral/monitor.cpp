@@ -123,7 +123,7 @@ int monitor::clear(lua_State *L) {
     if (selectedRenderer == 4) printf("TE:%d;\n", term->id);
     std::lock_guard<std::mutex> lock(term->locked);
     if (term->mode > 0) {
-        memset(term->pixels.data(), 0x0F, term->width * Terminal::fontWidth * term->height * Terminal::fontHeight);
+        memset(term->currentPixels()->data(), 0x0F, term->width * Terminal::fontWidth * term->height * Terminal::fontHeight);
     } else {
         memset(term->screen.data(), ' ', term->height * term->width);
         memset(term->colors.data(), colors, term->height * term->width);
@@ -275,7 +275,7 @@ int monitor::setPixel(lua_State *L) {
     const int color = term->mode == 1 ? log2i((int)lua_tointeger(L, 3)) : (int)lua_tointeger(L, 3);
     if (x < 0 || y < 0 || (unsigned)x >= term->width * 6 || (unsigned)y >= term->height * 9) return 0;
     if (color < 0 || color > (term->mode == 2 ? 255 : 15)) return luaL_error(L, "bad argument #3 (invalid color %d)", color);
-    term->pixels[y][x] = color;
+    (*term->currentPixels())[y][x] = color;
     term->changed = true;
     return 0;
 }
@@ -286,8 +286,8 @@ int monitor::getPixel(lua_State *L) {
     const int x = (int)luaL_checkinteger(L, 1);
     const int y = (int)luaL_checkinteger(L, 2);
     if (x < 0 || y < 0 || (unsigned)x >= term->width * Terminal::fontWidth || (unsigned)y >= term->height * Terminal::fontHeight) lua_pushnil(L);
-    else if (term->mode == 1) lua_pushinteger(L, 1 << term->pixels[y][x]);
-    else if (term->mode == 2) lua_pushinteger(L, term->pixels[y][x]);
+    else if (term->mode == 1) lua_pushinteger(L, 1 << (*term->currentPixels())[y][x]);
+    else if (term->mode == 2) lua_pushinteger(L, (*term->currentPixels())[y][x]);
     else return 0;
     return 1;
 }
@@ -326,14 +326,14 @@ int monitor::drawPixels(lua_State *L) {
             size_t str_sz;
             const char * str = lua_tolstring(L, -1, &str_sz);
             if (init_x + str_sz - 1 < (size_t)term->width * Terminal::fontWidth)
-                memcpy(&term->pixels[init_y+y-1][init_x], str, str_sz);
+                memcpy(&(*term->currentPixels())[init_y+y-1][init_x], str, str_sz);
         } else if (lua_istable(L, -1)) {
             for (unsigned x = 1; x <= lua_objlen(L, -1) && init_x + x - 1 < (unsigned)term->width * Terminal::fontWidth; x++) {
                 lua_pushinteger(L, x);
                 lua_gettable(L, -2);
                 if (lua_isnumber(L, -1) && lua_tointeger(L, -1) >= 0) {
-                    if (term->mode == 1) term->pixels[init_y + y - 1][init_x + x - 1] = (unsigned char)((unsigned)log2(lua_tointeger(L, -1)) % 256);
-                    else term->pixels[init_y + y - 1][init_x + x - 1] = (unsigned char)(lua_tointeger(L, -1) % 256);
+                    if (term->mode == 1) (*term->currentPixels())[init_y + y - 1][init_x + x - 1] = (unsigned char)((unsigned)log2(lua_tointeger(L, -1)) % 256);
+                    else (*term->currentPixels())[init_y + y - 1][init_x + x - 1] = (unsigned char)(lua_tointeger(L, -1) % 256);
                 }
                 lua_pop(L, 1);
             }
@@ -376,9 +376,9 @@ int monitor::getPixels(lua_State* L) {
                 || (unsigned) y >= term->height * Terminal::fontHeight)
                 lua_pushnil(L);
             else if (term->mode == 2)
-                lua_pushinteger(L, term->pixels[y][x]);
+                lua_pushinteger(L, (*term->currentPixels())[y][x]);
             else
-                lua_pushinteger(L, 1 << term->pixels[y][x]);
+                lua_pushinteger(L, 1 << (*term->currentPixels())[y][x]);
 
             lua_settable(L, -3);
         }
@@ -423,6 +423,26 @@ int monitor::fillPixels(lua_State* L) {
     return 0;
 }
 
+int monitor::bufferPixels(lua_State* L) {
+    lastCFunction = __func__;
+
+    luaL_checktype(L, 1, LUA_TBOOLEAN);
+    const int buffer = lua_toboolean(L, 1);
+
+    std::lock_guard<std::mutex> lock(term->locked);
+
+    if (buffer == term->bufferPixels) return 0;
+    term->bufferPixels = buffer;
+
+    if (buffer) {
+        memcpy(term->pixelBuffer.data(), term->pixels.data(), term->pixels.dataSize());
+    } else {
+        memcpy(term->pixels.data(), term->pixelBuffer.data(), term->pixels.dataSize());
+    }
+
+    return 0;
+}
+
 int monitor::call(lua_State *L, const char * method) {
     std::string m(method);
     if (m == "write") return write(L);
@@ -457,6 +477,7 @@ int monitor::call(lua_State *L, const char * method) {
     else if (m == "drawPixels") return drawPixels(L);
     else if (m == "getPixels") return getPixels(L);
     else if (m == "fillPixels") return fillPixels(L);
+    else if (m == "bufferPixels") return bufferPixels(L);
     else return 0;
 }
 
@@ -494,6 +515,7 @@ static luaL_Reg monitor_reg[] = {
     {"drawPixels", NULL},
     {"getPixels", NULL},
     {"fillPixels", NULL},
+    {"bufferPixels", NULL},
     {NULL, NULL}
 };
 
